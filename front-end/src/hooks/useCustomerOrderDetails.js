@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { useParams } from 'react-router';
+import { useNavigate } from 'react-router-dom';
 import getSalesFromCustomer from '../services/getSalesFromCustomer';
 import updateSale from '../services/updateSale';
 import getUserInfo from '../utils/getUserInfo';
@@ -8,6 +9,7 @@ import getUserInfo from '../utils/getUserInfo';
 const socket = io('http://localhost:3001');
 
 const useOrderDetails = () => {
+  const navigate = useNavigate();
   const mounted = useRef(false);
   const { id: orderId } = useParams();
   const [order, setOrder] = useState({});
@@ -22,31 +24,33 @@ const useOrderDetails = () => {
     };
   }, []);
 
-  const getCurrentOrder = useCallback(async () => {
-    const sale = await getSalesFromCustomer(userId);
-    return setOrder(() => sale[orderId - 1]);
-  }, [orderId, userId]);
+  useEffect(() => {
+    const updateOrder = async () => {
+      if (mounted.current) {
+        const sales = await getSalesFromCustomer(userId);
+        if (sales.error) return navigate('/customer/orders');
+        const sale = sales[orderId - 1];
+        if (!sale) return navigate('/customer/orders');
+        setOrder(sale);
+      }
+    };
+
+    updateOrder();
+    socket.on('statusUpdated', () => updateOrder());
+  }, [orderId, userId, navigate]);
 
   useEffect(() => {
-    if (mounted.current) {
-      getCurrentOrder();
-    }
-    socket.emit('statusUpdated');
-  }, [getCurrentOrder]);
-
-  socket.on('statusUpdated', () => getCurrentOrder());
-
-  useEffect(() => {
-    if (order.status && order.status === 'Em Trânsito') {
+    if (mounted.current && order.status && order.status === 'Em Trânsito') {
       setDeliveredDisplay(false);
-    } else {
-      setDeliveredDisplay(true);
     }
-  }, [order]);
+    if (mounted.current && order.products && order.products.length === 0) {
+      getSalesFromCustomer(userId).then((response) => setOrder(response[orderId - 1]));
+    }
+  }, [order, orderId, userId]);
 
   const receiveOrder = async () => {
     await updateSale({ ...order, status: 'Entregue' });
-    setOrder({ ...order, status: 'Entregue' });
+    setDeliveredDisplay(true);
 
     socket.emit('statusUpdated');
   };
